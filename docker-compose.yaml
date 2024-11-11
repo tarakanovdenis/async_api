@@ -1,0 +1,123 @@
+services:
+  async_api_backend:
+    container_name: async_api_backend
+    hostname: async_api_backend
+    build:
+      context: ./async_api/
+    env_file:
+      - ./async_api/.env
+    volumes:
+      - ./async_api/:/opt/app/
+    ports:
+      - "8000:8000"
+    networks:
+      - appnet
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+
+  postgres_db:
+    container_name: postgres_db
+    hostname: postgres_db
+    image: postgres:15.7
+    env_file:
+      - ./async_api/.env
+    volumes:
+      - $HOME/postgres_db/data:/var/lib/postgresql/data
+      - ./async_api/etl/sqlite_to_postgres/movies_database.ddl:/movies_database.ddl:ro
+    expose:
+      - "5432:5432"
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    restart: on-failure
+
+  redis:
+    container_name: redis
+    hostname: redis
+    image: redis:latest
+    volumes:
+      - redis-data:/var/lib/redis
+      - redis.conf:/usr/local/etc/redis/redis.conf
+    ports:
+      - 6379:6379
+    networks:
+      - appnet
+
+  elasticsearch:
+    container_name: elasticsearch
+    hostname: elasticsearch
+    image: elasticsearch:8.6.2
+    env_file:
+      - ./async_api/.env
+    ports:
+      - 9200:9200
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-f", "http://elasticsearch:9200/_cat/health"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - appnet
+    depends_on:
+      - redis
+
+  etl_from_postgres_to_es:
+    container_name: etl_from_postgres_to_es
+    build:
+      context: ./async_api/etl/
+    restart: always
+    env_file:
+      - ./async_api/.env
+      - ./async_api/.env
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      postgres_db:
+        condition: service_started
+    volumes:
+      - ./async_api/etl/:/opt/app/
+    networks:
+      - appnet
+    command: bash start_etl.sh
+
+  nginx:
+    container_name: nginx
+    image: nginx:latest
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/configs/:/etc/nginx/conf.d/:ro
+      - ./nginx/logs/:/var/log/nginx/
+    ports:
+      - "80:80"
+    networks:
+      - appnet
+    restart: on-failure
+
+  # pgadmin:
+  #   container_name: pgadmin
+  #   image: dpage/pgadmin4
+  #   ports:
+  #     - "82:80"
+  #   environment:
+  #     - PGADMIN_DEFAULT_EMAIL=root@mail.com
+  #     - PGADMIN_DEFAULT_PASSWORD=root
+  #   networks:
+  #     - appnet
+
+networks:
+  appnet:
+    driver: bridge
+    name: appnet
+
+volumes:
+  redis.conf:
+  redis-data:
+  elasticsearch-data:

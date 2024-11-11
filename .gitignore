@@ -1,0 +1,7 @@
+.venv
+*.py[cdo]
+
+.env
+
+*.log
+*log.json
